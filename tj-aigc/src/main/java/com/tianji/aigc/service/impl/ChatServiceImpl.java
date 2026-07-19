@@ -1,5 +1,7 @@
 package com.tianji.aigc.service.impl;
 
+import cn.hutool.core.date.DateUtil;
+import com.tianji.aigc.config.SystemPromptConfig;
 import com.tianji.aigc.enums.ChatEventTypeEnum;
 import com.tianji.aigc.service.ChatService;
 import com.tianji.aigc.vo.ChatEventVO;
@@ -9,6 +11,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.Map;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -16,13 +20,20 @@ public class ChatServiceImpl implements ChatService {
 
     private final ChatClient chatClient;
 
-
+    private final SystemPromptConfig systemPromptConfig;
+    
     @Override
     public Flux<ChatEventVO> chat(String question, String sessionId) {
         return this.chatClient.prompt()
+                .system(promptSystemSpec -> promptSystemSpec
+                                .text(systemPromptConfig.getChatSystemMessage().get())
+                                .params(Map.of("now", DateUtil.now())))
                 .user(question)
                 .stream()
                 .chatResponse()
+                .filter(chatResponse ->
+                        chatResponse.getResult() != null
+                )
                 .map(chatResponse -> {
                     // 获取大模型的输出的内容
                     String text = chatResponse.getResult().getOutput().getText();
