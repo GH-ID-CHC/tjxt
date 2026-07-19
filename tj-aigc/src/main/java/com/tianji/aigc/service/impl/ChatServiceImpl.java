@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -21,6 +22,10 @@ public class ChatServiceImpl implements ChatService {
     private final ChatClient chatClient;
 
     private final SystemPromptConfig systemPromptConfig;
+
+    // 存储大模型的生成状态，这里采用ConcurrentHashMap是确保线程安全
+    // 目前的版本暂时用Map实现，如果考虑分布式环境的话，可以考虑用redis来实现
+    private static final Map<String, Boolean> GENERATE_STATUS = new ConcurrentHashMap<>();
     
     @Override
     public Flux<ChatEventVO> chat(String question, String sessionId) {
@@ -34,6 +39,12 @@ public class ChatServiceImpl implements ChatService {
                 .filter(chatResponse ->
                         chatResponse.getResult() != null
                 )
+                .doFirst(() -> GENERATE_STATUS.put(sessionId, true)) // 第一次输出内容时执行
+                .doOnError(throwable -> GENERATE_STATUS.remove(sessionId)) // 出现异常时，删除标识
+                .doOnComplete(() -> GENERATE_STATUS.remove(sessionId)) // 完成时执行，删除标识
+                .takeWhile(response -> { // 通过返回值来控制Flux流是否继续，true：继续，false：终止
+                    return GENERATE_STATUS.getOrDefault(sessionId, false);
+                })
                 .map(chatResponse -> {
                     // 获取大模型的输出的内容
                     String text = chatResponse.getResult().getOutput().getText();
@@ -46,5 +57,10 @@ public class ChatServiceImpl implements ChatService {
                 .concatWith(Flux.just(ChatEventVO.builder()  // 标记输出结束
                         .eventType(ChatEventTypeEnum.STOP.getValue())
                         .build()));
+    }
+
+    @Override
+    public void stop(String sessionId) {
+        GENERATE_STATUS.remove(sessionId);
     }
 }
